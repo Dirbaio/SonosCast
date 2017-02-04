@@ -6,11 +6,15 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <thread>
+
+#include "realtime.h"
+#include "sntp.h"
 
 #define CLEAR_LINE "\n"
 #define _(x) x
 
-#define TIME_EVENT_USEC 50000
+#define TIME_EVENT_USEC 10000
 
 // From pulsecore/macro.h
 #define pa_memzero(x,l) (memset((x), 0, (l)))
@@ -28,13 +32,6 @@ static pa_sample_spec sample_spec = {
 };
 
 static pa_stream *stream = NULL;
-
-/* This is my builtin card. Use paman to find yours
-   or set it to NULL to get the default device
-*/
-static char *device = NULL; //"alsa_input.pci-0000_00_1b.0.analog-stereo";
-
-static int flags = 0; // pa_stream_flags_t
 
 void stream_state_callback(pa_stream *s, void *userdata) {
     assert(s);
@@ -78,47 +75,6 @@ void stream_state_callback(pa_stream *s, void *userdata) {
     }
 }
 
-long long latency_usec;
-
-/* Show the current latency */
-static void stream_update_timing_callback(pa_stream *s, int success, void *userdata) {
-    pa_usec_t l, usec;
-    int negative = 0;
-
-    // pa_assert(s);
-
-    if (!success ||
-            pa_stream_get_time(s, &usec) < 0 ||
-            pa_stream_get_latency(s, &l, &negative) < 0) {
-        // pa_log(_("Failed to get latency"));
-        //pa_log(_("Failed to get latency: %s"), pa_strerror(pa_context_errno(context)));
-        // quit(1);
-        return;
-    }
-
-    if(negative)
-        latency_usec = -l;
-    else
-        latency_usec = l;
-
-    fprintf(stderr, _("Time: %0.3f sec; Latency: %0.0f usec.\n"),
-            (float) usec / 1000000,
-            (float) l * (negative?-1.0f:1.0f));
-}
-
-static void time_event_callback(pa_mainloop_api *m, pa_time_event *e, const struct timeval *t, void *userdata) {
-    if (stream && pa_stream_get_state(stream) == PA_STREAM_READY) {
-        pa_operation *o;
-        if (!(o = pa_stream_update_timing_info(stream, stream_update_timing_callback, NULL)))
-            fprintf(stderr, "pa_stream_update_timing_info() failed: %s", pa_strerror(pa_context_errno(context)));
-        else
-            pa_operation_unref(o);
-    }
-
-    pa_context_rttime_restart(context, e, pa_rtclock_now() + TIME_EVENT_USEC);
-}
-
-
 void get_latency(pa_stream *s) {
     pa_usec_t latency;
     int neg;
@@ -149,6 +105,17 @@ int min(int a, int b) {
     return a < b ? a : b;
 }
 
+long long e9 = 1e9;
+long long getnsec() {
+    timespec tm;
+    clock_gettime(CLOCK_MONOTONIC, &tm);
+    long long nsec = tm.tv_nsec;
+    long long sec = tm.tv_sec;
+    return nsec + sec * e9;
+}
+
+long long start_timestamp = 0;
+
 /* This is called whenever new data is available */
 static void stream_read_callback(pa_stream *s, size_t length, void *userdata) {
     assert(s);
@@ -164,7 +131,6 @@ static void stream_read_callback(pa_stream *s, size_t length, void *userdata) {
             exit(1);
             return;
         }
-        //sprintf("sending2: %d\n", length);
 
         int used = 0;
         while(used < length) {
@@ -175,27 +141,27 @@ static void stream_read_callback(pa_stream *s, size_t length, void *userdata) {
             if(buffill == buflen) {
                 buffill = 0;
 
-                timespec tm;
-                clock_gettime(CLOCK_MONOTONIC, &tm);
-                long long nsec = tm.tv_nsec;
-                long long sec = tm.tv_sec;
-                nsec -= latency_usec * 1000;
-                //printf("latency_usec: %d\n", latency_usec);
-                nsec += 50 * 1000000;
-                while(nsec < 0) {
-                    nsec += 1e9;
-                    sec--;
-                }
-                while(nsec >= 1e9) {
-                    nsec -= 1e9;
-                    sec++;
+                if(start_timestamp == 0)
+                    start_timestamp = getnsec();
+
+                pa_usec_t t;
+                if (pa_stream_get_time(s, &t) < 0) {
+                    printf("Failed to get latency: %s", pa_strerror(pa_context_errno(context)));
+                    exit(1);
                 }
 
+                //printf("%lld\n", nsec);
+                //timestamp -= latency_usec * 1000;
+                long long timestamp2 = start_timestamp + t * 1000;
+                timestamp2 += 20 * 1000000;
+
+                int sec = timestamp2 / e9;
+                int usec = (timestamp2 % e9) / 1000;
                 * (unsigned int*) (buf+0) = htonl(packet_counter);
                 * (unsigned int*) (buf+4) = 0;
                 * (unsigned int*) (buf+8) = 0xf0030001;
                 * (unsigned int*) (buf+12) = htonl(sec);
-                * (unsigned int*) (buf+16) = htonl(nsec/1000);
+                * (unsigned int*) (buf+16) = htonl(usec);
                 * (unsigned int*) (buf+20) =  htonl(byte_counter);
                 * (unsigned short*) (buf+24) =  0x1002;
                 * (unsigned short*) (buf+26) =  htons(44100);
@@ -209,12 +175,6 @@ static void stream_read_callback(pa_stream *s, size_t length, void *userdata) {
                 }
             }
         }
-
-
-//        if(cb != NULL)
-//            cb((short*) data, length/4);
-//        fprintf(stderr, "Writing %d\n", length);
-//        write(fdout, data, length);
 
         // swallow the data peeked at before
         pa_stream_drop(s);
@@ -260,19 +220,19 @@ void state_cb(pa_context *c, void *userdata) {
             pa_stream_set_read_callback(stream, stream_read_callback, NULL);
 
             // timing info
-            pa_stream_update_timing_info(stream, stream_update_timing_callback, NULL);
+            //pa_stream_update_timing_info(stream, stream_update_timing_callback, NULL);
 
             // Set properties of the record buffer
             pa_zero(buffer_attr);
             buffer_attr.maxlength = buflen;
-            buffer_attr.prebuf = 0;
+            buffer_attr.fragsize = buflen;
 
-            buffer_attr.fragsize = buffer_attr.tlength = buflen;
+            int flags = 0;
+            flags |= PA_STREAM_AUTO_TIMING_UPDATE;
             flags |= PA_STREAM_ADJUST_LATENCY;
-
-            buffer_attr.minreq = (uint32_t) buflen;
-
             flags |= PA_STREAM_INTERPOLATE_TIMING;
+
+            const char* device = NULL;
 
             // and start recording
             if (pa_stream_connect_record(stream, device, &buffer_attr, (pa_stream_flags_t)flags) < 0) {
@@ -283,7 +243,16 @@ void state_cb(pa_context *c, void *userdata) {
         }
     }
 }
+
+
+void sntp_thread_main() {
+    make_realtime(5);
+    sntp_loop();
+}
+
 int main() {
+    make_realtime(5);
+    std::thread sntp_thread(sntp_thread_main);
 
     /* set up socket */
     sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -316,11 +285,11 @@ int main() {
 
     // This function defines a callback so the server will tell us its state.
     pa_context_set_state_callback(context, state_cb, NULL);
-
+/*
     if (!(time_event = pa_context_rttime_new(context, pa_rtclock_now() + TIME_EVENT_USEC, time_event_callback, NULL))) {
         printf("pa_mainloop_run() failed.");
         exit(1);
-    }
+    }*/
 
 
     if (pa_mainloop_run(pa_ml, &ret) < 0) {

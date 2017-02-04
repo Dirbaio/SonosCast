@@ -54,55 +54,6 @@ X-RINCON-VARIANT: 0""".format(ip=MY_IP, sonos_id=SONOS_ID, server=SERVER_HEADER,
 
 asyncio.ensure_future(do_hello())
 
-def bytes_to_hex(a):
-    assert isinstance(a, bytes)
-    return str(binascii.hexlify(a), 'utf-8')
-
-def weird_timestamp(m):
-    r = struct.pack('>Q', int(m*(2**32)))
-    return r
-
-class SNTPProtocol:
-    '''
-    timestamps are in 2^32th's of seconds - 8 bytes, big endian
-
-                                                     24                32                40
-    Request:                                                                              Timestamp when request was sent
-    1b0f08000000000000000000000000000000000000000000 00000000 00000000 00000000 00000000 83aa9b18 23309800
-
-    Response:                                   Timestamp from request   Timestamp 1       Timestamp 2
-    1c0f08000000000000000000000000000000000000000000 83aa9b18 23309800 83aaeb55 6d333800 83aaeb55 6d3ff000
-    Timestamp 2 is always slightly later than timestamp 1 ?????
-    '''
-
-    def connection_made(self, transport):
-        print('start', transport)
-        self.transport = transport
-
-    def datagram_received(self, data, addr):
-        print('<<<', bytes_to_hex(data))
-        m = time.monotonic()
-        m += 2208988800
-        m -= 0.05
-        my_timestamp = weird_timestamp(m)
-        m += 0.00019407272
-        my_timestamp2 = weird_timestamp(m)
-        data = b'\x1c\x0f' + data[2:24] + data[40:48] + my_timestamp + my_timestamp2
-        print('>>>', bytes_to_hex(data))
-        self.transport.sendto(data, addr)
-
-    def error_received(self, exc):
-        print('Error received:', exc)
-
-    def connection_lost(self, exc):
-        print('stop', exc)
-
-loop = asyncio.get_event_loop()
-t = asyncio.Task(loop.create_datagram_endpoint(SNTPProtocol, local_addr=('0.0.0.0', 12300)))
-asyncio.ensure_future(t)
-
-
-
 next_sid = 0
 
 def generate_sid():

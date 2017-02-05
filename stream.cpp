@@ -53,16 +53,16 @@ void stream_state_callback(pa_stream *s, void *userdata) {
                 const pa_buffer_attr *a;
                 char cmt[PA_CHANNEL_MAP_SNPRINT_MAX], sst[PA_SAMPLE_SPEC_SNPRINT_MAX];
 
-                printf("Stream successfully created.");
+                printf("Stream successfully created.\n");
 
                 if (!(a = pa_stream_get_buffer_attr(s)))
-                    printf("pa_stream_get_buffer_attr() failed: %s", pa_strerror(pa_context_errno(pa_stream_get_context(s))));
+                    printf("pa_stream_get_buffer_attr() failed: %s\n", pa_strerror(pa_context_errno(pa_stream_get_context(s))));
                 else {
-                    printf("Buffer metrics: maxlength=%u, fragsize=%u", a->maxlength, a->fragsize);
+                    printf("Buffer metrics: maxlength=%u, fragsize=%u\n", a->maxlength, a->fragsize);
 
                 }
 
-                printf("Connected to device %s (%u, %ssuspended).",
+                printf("Connected to device %s (%u, %ssuspended).\n",
                        pa_stream_get_device_name(s),
                        pa_stream_get_device_index(s),
                        pa_stream_is_suspended(s) ? "" : "not ");
@@ -70,26 +70,10 @@ void stream_state_callback(pa_stream *s, void *userdata) {
             break;
         case PA_STREAM_FAILED:
         default:
-            printf("Stream error: %s", pa_strerror(pa_context_errno(pa_stream_get_context(s))));
+            printf("Stream error: %s\n", pa_strerror(pa_context_errno(pa_stream_get_context(s))));
             exit(1);
     }
 }
-
-void get_latency(pa_stream *s) {
-    pa_usec_t latency;
-    int neg;
-    const pa_timing_info *timing_info;
-
-    timing_info = pa_stream_get_timing_info(s);
-
-    if (pa_stream_get_latency(s, &latency, &neg) != 0) {
-        fprintf(stderr, __FILE__": pa_stream_get_latency() failed\n");
-        return;
-    }
-
-    fprintf(stderr, "%0.0f usec    \r", (float)latency);
-}
-
 
 /*********** Stream callbacks **************/
 char buf[4098];
@@ -153,7 +137,7 @@ static void stream_read_callback(pa_stream *s, size_t length, void *userdata) {
                 //printf("%lld\n", nsec);
                 //timestamp -= latency_usec * 1000;
                 long long timestamp2 = start_timestamp + t * 1000;
-                timestamp2 += 20 * 1000000;
+                timestamp2 += 35 * 1000000;
 
                 int sec = timestamp2 / e9;
                 int usec = (timestamp2 % e9) / 1000;
@@ -272,8 +256,6 @@ int main() {
     // Define our pulse audio loop and connection variables
     pa_mainloop *pa_ml;
     pa_mainloop_api *pa_mlapi;
-    pa_operation *pa_op;
-    pa_time_event *time_event;
 
     // Create a mainloop API and connection to the default server
     pa_ml = pa_mainloop_new();
@@ -285,12 +267,6 @@ int main() {
 
     // This function defines a callback so the server will tell us its state.
     pa_context_set_state_callback(context, state_cb, NULL);
-/*
-    if (!(time_event = pa_context_rttime_new(context, pa_rtclock_now() + TIME_EVENT_USEC, time_event_callback, NULL))) {
-        printf("pa_mainloop_run() failed.");
-        exit(1);
-    }*/
-
 
     if (pa_mainloop_run(pa_ml, &ret) < 0) {
         printf("pa_mainloop_run() failed.");

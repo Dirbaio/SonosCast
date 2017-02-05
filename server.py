@@ -25,7 +25,7 @@ SUBSCRIPTION_TIMEOUT = 3600
 FIRMWARE_VERSION = '34.16-37101'
 FIRMWARE_DISPLAY_VERSION = '7.1'
 SERVER_HEADER = 'Linux UPnP/1.0 Sonos/{} (ZPS5)'.format(FIRMWARE_VERSION)
-SONOS_HOUSEHOLD = 'Sonos_blahblahblah'  # TODO Autodiscover this
+SONOS_HOUSEHOLD = 'Sonos_AafT5QbaoptKSoEB7VzvHfC5Uu'  # TODO Autodiscover this
 
 async def do_hello():
     things = """NOTIFY * HTTP/1.1
@@ -418,6 +418,15 @@ class GroupManagementService(Service):
 class AVTransportService(Service):
     def __init__(self, router):
         Service.__init__(self, 'MediaRenderer/AVTransport', router)
+    def handle_soap_gettransportinfo(self, **kwargs):
+        return """
+            <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>
+                <u:GetTransportInfoResponse xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+                    <CurrentTransportState>STOPPED</CurrentTransportState>
+                    <CurrentTransportStatus>OK</CurrentTransportStatus>
+                    <CurrentSpeed>1</CurrentSpeed>
+                </u:GetTransportInfoResponse>
+            </s:Body></s:Envelope>"""
 
 class ContentDirectoryService(Service):
     SystemUpdateID = Variable(is_evented=True, default='2')
@@ -512,9 +521,8 @@ class AudioInService(Service):
 
     def handle_soap_starttransmissiontogroup(self, CoordinatorID):
         print('StartTransmissionToGroup', CoordinatorID)
-        if self.proc:
-            kill(self.proc.pid)
-        self.proc = subprocess.Popen(["./stream"])
+        if self.proc is None:
+            self.proc = subprocess.Popen(["./stream"])
         return '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:StartTransmissionToGroupResponse xmlns:u="urn:schemas-upnp-org:service:AudioIn:1"><CurrentTransportSettings>225.238.76.46:6982,{my_ip}:6980:6981,{my_id}</CurrentTransportSettings></u:StartTransmissionToGroupResponse></s:Body></s:Envelope>'.format(my_ip=MY_IP, my_id=SONOS_ID)
 
     def handle_soap_stoptransmissiontogroup(self, CoordinatorID):
